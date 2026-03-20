@@ -18,6 +18,12 @@ dataset_description:
     Based on this information, please add sentence(s) discussing the semantic profile in the description.
   topic_instruction: |
     Moreover, the dataset topic is: {data_topic}. Based on this topic, please add sentence(s) describing what this dataset can be used for.
+  context_instruction: |
+    Furthermore, the following additional context about this dataset was extracted from a research paper:
+
+    {data_context}
+
+    Based on this paper-derived context, add sentence(s) that enrich the description with the most important information that cannot be found inside the dataset itself — such as how the data was collected, how it was used in research, or key limitations. Be brief and select only what is most useful for a researcher deciding whether this dataset fits their study.
   closing_instruction: |
     Question: Based on the information above and the requirements, provide a dataset description in sentences. Use only natural, readable sentences without special formatting.
 
@@ -234,3 +240,83 @@ pairwise_evaluation:
     - Readability (1-10) -  Evaluates the logical flow and readability of the dataset description. A high score suggests that the description progresses logically from one section to the next, creating a coherent and integrated narrative that facilitates understanding of the dataset.
 
     Which description is better?
+
+context_profiler:
+  system_message: |
+    You are a research paper analyst helping to enrich dataset descriptions.
+    Your goal is to extract information about a specific dataset from a paper and use it
+    to produce additional description sentences that go beyond what the data itself reveals.
+  description_prompt: |
+    You are given a dataset and excerpts from a research paper that mention it.
+    Write 1–3 concise sentences about the dataset using ONLY information found in
+    the provided excerpts. Do not invent or assume anything not explicitly stated.
+
+    Dataset title: {dataset_title}{dataset_topic}
+    Existing description: {dataset_description}
+
+    Paper excerpts:
+    {context_passages}
+
+    Prioritise the most useful facts for a researcher evaluating whether this dataset
+    fits their study — such as:
+    - How the data was collected or generated (methodology, instruments, sources, time period, geographic scope).
+    - How the dataset was used in the paper (tasks, experiments, benchmarks, evaluations).
+    - Why the dataset was created and what research question it supports.
+    - Notable characteristics, curation decisions, or known limitations described in the paper.
+    - What the dataset enables for other researchers or practitioners. 
+    Do not repeat information already in the existing description.
+    If the excerpts contain no relevant information, return an empty string.
+
+    Example (traffic dataset):
+      "Collected via automated highway sensors across five U.S. states (2018–2022),
+      the dataset was used to benchmark congestion prediction under adverse weather;
+      the authors note possible calibration issues in night-time readings before 2020."
+
+    Example (biomedical dataset):
+      "Curated from de-identified records at three hospital networks, it served as the
+      primary readmission-prediction benchmark in the paper; the authors caution that
+      the cohort skews toward urban populations."
+
+    Additional description:
+  docetl_chunk_prompt: |
+    You are analysing a chunk of text from a research paper.
+    Dataset being searched: "{dataset_title}"{dataset_topic}
+    Existing dataset description: {dataset_description}
+
+    Extract ONLY the sentences or phrases in the chunk that specifically describe this
+    dataset — including how it was collected, how it was used, its scope, its
+    limitations, or the methodology behind it. Copy relevant text verbatim.
+    If this chunk contains nothing about the dataset, output an empty string.
+
+    Extracted information about the dataset:
+  llm_selection_prompt: |
+    You are given a set of paragraphs from a research paper.
+    Your task is to identify and return ONLY the paragraphs that specifically discuss
+    the dataset described below.
+
+    Dataset title: {dataset_title}{dataset_topic}
+    Dataset description: {dataset_description}
+
+    A paragraph is relevant if it describes this dataset's collection method, scope,
+    usage in experiments, characteristics, or limitations. Ignore paragraphs that merely
+    cite the dataset in passing or discuss unrelated datasets.
+
+    Paragraphs:
+    {paragraphs}
+
+    Return ONLY the relevant paragraphs verbatim, separated by a blank line.
+    If none are relevant, return an empty string.
+  paragraph_judge_prompt: |
+    You are judging whether the following paragraph from a research paper specifically
+    describes the dataset listed below.
+
+    Dataset title: {dataset_title}{dataset_topic}
+    Dataset description: {dataset_description}
+
+    Paragraph:
+    {paragraph}
+
+    Does this paragraph provide substantive information about THIS specific dataset
+    (e.g. its collection, scope, methodology, usage, or characteristics)?
+    Answer with exactly "yes" or "no".
+

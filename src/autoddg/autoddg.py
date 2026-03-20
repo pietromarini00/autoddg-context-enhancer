@@ -8,7 +8,7 @@ from pandas import DataFrame
 from .description import DatasetDescriptionGenerator, SearchFocusedDescription
 from .evaluation import BaseEvaluator
 from .llm import LocalLLMClient, OpenAICompatibleClient
-from .profiling import SemanticProfiler, profile_dataset
+from .profiling import ContextFocusedDescription, SemanticProfiler, profile_dataset
 from .topic import DatasetTopicGenerator
 
 
@@ -20,7 +20,8 @@ class AutoDDG:
     * profiling,
     * semantic analysis,
     * topic generation,
-    * dataset description,
+    * dataset description (with optional profile, semantic, topic, and paper context),
+    * paper-context extraction from research PDFs,
     * search-focused description expansion, and
     * optional description evaluation
 
@@ -31,15 +32,18 @@ class AutoDDG:
             ``"Qwen/Qwen2.5-7B-Instruct"`` for local).
         use_local_llm (bool): If True, use local LLM via transformers.
             Requires transformers and torch.
-        local_llm_device (str | None): Device for local LLM ("cuda", "cpu", or None
-            for auto).
-        local_llm_dtype (str | None): Data type for local LLM ("float16", "bfloat16",
-            "float32", or None for auto).
-        description_temperature (float): Temperature for description generation.
+        local_llm_device (str | None): Device for local LLM (``"cuda"``, ``"cpu"``,
+            or None for auto).
+        local_llm_dtype (str | None): Data type for local LLM (``"float16"``,
+            ``"bfloat16"``, ``"float32"``, or None for auto).
+        description_temperature (float): Sampling temperature for description
+            generation.  Lower values produce more deterministic output.
         description_words (int): Target word count for generated descriptions.
-        search_model_name (str | None): Override model for search-expansion.
-        semantic_model_name (str | None): Override model for semantic profiling.
-        topic_temperature (float): Temperature for topic generation.
+        search_model_name (str | None): Override model for search-expansion and
+            paper-context extraction.  Defaults to *model_name*.
+        semantic_model_name (str | None): Override model for semantic column
+            profiling.  Defaults to *model_name*.
+        topic_temperature (float): Sampling temperature for topic generation.
         evaluator (BaseEvaluator | None): Optional evaluator for quality scoring.
 
     Examples:
@@ -72,7 +76,13 @@ class AutoDDG:
             >>> prompt, desc = pipe.describe_dataset(dataset_sample=sample_csv)
             >>> print(desc)
 
-        Advanced usage with topic and evaluator:
+        Advanced usage with topic, paper context, and evaluator:
+
+            The recommended workflow is to first generate a base description from
+            the data itself (sample, structural profile, semantic profile, topic),
+            then use that description together with the paper PDF to extract
+            paper-derived context, and finally regenerate the description including
+            that context.
 
             >>> import pandas as pd
             >>> from autoddg import GPTEvaluator
@@ -83,13 +93,35 @@ class AutoDDG:
             ... })
             >>> profile, semantic = pipe.profile_dataframe(df)
             >>> topic = pipe.generate_topic("UK Cities", None, df.to_csv(index=False))
+            >>> # Step 1 — base description from the data alone
+            >>> _, base_desc = pipe.describe_dataset(
+            ...     dataset_sample=df.to_csv(index=False),
+            ...     dataset_profile=profile,
+            ...     use_profile=True,
+            ...     semantic_profile=semantic,
+            ...     use_semantic_profile=True,
+            ...     data_topic=topic,
+            ...     use_topic=True,
+            ... )
+            >>> # Step 2 — extract additional context from the paper,
+            >>> #           using the base description as contextual signal
+            >>> paper_context = pipe.extract_content(
+            ...     pdf_path="paper.pdf",
+            ...     dataset_title="UK Cities",
+            ...     dataset_description=base_desc,
+            ...     dataset_topic=topic,
+            ... )
+            >>> # Step 3 — regenerate description enriched with paper context
             >>> _, desc = pipe.describe_dataset(
             ...     dataset_sample=df.to_csv(index=False),
             ...     dataset_profile=profile,
             ...     use_profile=True,
             ...     semantic_profile=semantic,
             ...     use_semantic_profile=True,
-            ...     data_topic=topic, use_topic=True,
+            ...     data_topic=topic,
+            ...     use_topic=True,
+            ...     data_context=paper_context,
+            ...     use_context=True,
             ... )
             >>> evaluator = GPTEvaluator(gpt4_api_key="sk-...")
             >>> pipe.set_evaluator(evaluator)
@@ -148,6 +180,10 @@ class AutoDDG:
             model_name=model_name,
             temperature=topic_temperature,
         )
+        self.context_extractor = ContextFocusedDescription(
+            client=llm_client,
+            model_name=search_model_name or model_name,
+        )
         self.search_description = SearchFocusedDescription(
             client=llm_client,
             model_name=search_model_name or model_name,
@@ -163,21 +199,43 @@ class AutoDDG:
         use_semantic_profile: bool = False,
         data_topic: str | None = None,
         use_topic: bool = False,
+        data_context: str | None = None,
+        use_context: bool = False,
     ) -> tuple[str, str]:
         """
-        Produce a short description from a CSV sample with optional context
+        Produce a dataset description from a CSV sample with optional enrichment signals.
+
+        Each optional signal can be included independently by pairing the data
+        argument with its ``use_*`` flag.  For the richest description, pass all
+        signals together — including paper-derived context obtained via
+        :meth:`extract_content`.
 
         Args:
-            dataset_sample: CSV text containing example rows
-            dataset_profile: Structural profile text
-            use_profile: Include the structural profile if True
-            semantic_profile: Natural-language column semantics
-            use_semantic_profile: Include the semantic profile if True
-            data_topic: Short topic string for the dataset
-            use_topic: Include the topic if True
+            dataset_sample: CSV text containing representative rows of the dataset.
+            dataset_profile: Structural profile text produced by
+                :meth:`profile_dataframe` (column types, distinct value counts,
+                coverage ranges).
+            use_profile: Include the structural profile in the prompt if True.
+            semantic_profile: Natural-language column semantics produced by
+                :meth:`analyze_semantics` (temporal, spatial, entity type, …).
+            use_semantic_profile: Include the semantic profile in the prompt if True.
+            data_topic: Short 2–3 word topic string produced by
+                :meth:`generate_topic`.
+            use_topic: Include the topic in the prompt if True.
+            data_context: Additional context extracted from an external source
+                such as a research paper or codebook.  Typically the string
+                returned by :meth:`extract_content`, which contains paper-derived
+                information about data collection methodology, research usage,
+                known limitations, and other aspects that cannot be inferred from
+                the data itself.
+            use_context: Include the paper-derived context in the prompt if True.
+                When True, the prompt explicitly asks the model to address how the
+                data was collected, how it was used in research, and any notable
+                characteristics or limitations described in the source.
 
         Returns:
-            (prompt, description)
+            (prompt, description) — the full prompt sent to the model and the
+            generated description string.
         """
 
         return self.description_generator.generate_description(
@@ -188,13 +246,15 @@ class AutoDDG:
             use_semantic_profile=use_semantic_profile,
             data_topic=data_topic,
             use_topic=use_topic,
+            data_context=data_context,
+            use_context=use_context,
         )
 
     def profile_dataframe(self, dataframe: DataFrame) -> tuple[str, str]:
         """
-        Summarise structure and coverage using the datamart profiler
+        Summarise structure and coverage using the atlas profiler
 
-        Ref: https://pypi.org/project/datamart-profiler/
+        Ref: https://github.com/VIDA-NYU/atlas-profiler#
 
         Args:
             dataframe: Input frame
@@ -278,6 +338,96 @@ class AutoDDG:
         """
 
         return self.topic_generator.generate_topic(title, original_description, dataset_sample)
+
+    def extract_content(
+        self,
+        pdf_path: str,
+        dataset_title: str | None = None,
+        dataset_description: str | None = None,
+        dataset_topic: str | None = None,
+        method: str = "auto",
+    ) -> str:
+        """Extract paper-derived context for a dataset and return an enriched description.
+
+        Reads a research paper PDF and produces additional descriptive sentences
+        about a specific dataset using information that exists only in the paper —
+        such as how the data was collected, how it was used in experiments, and
+        what methodology or curation decisions shaped it.
+
+        Delegates to :class:`~autoddg.profiling.ContextFocusedDescription`.
+
+        Args:
+            pdf_path: Filesystem path to the paper PDF.
+            dataset_title: Title/name of the dataset to search for in the paper.
+            dataset_description: Existing description of the dataset.  Used both
+                as context for the LLM when generating the enriched description
+                and (in keyword-based methods) as an extra source of search terms.
+            dataset_topic: Optional short topic string (2–3 words).  Useful when
+                the dataset title alone is ambiguous or too generic — the topic
+                is included in every LLM prompt to help the model focus on the
+                right dataset.
+            method: Which extraction strategy to use.  Each strategy differs in
+                how it locates the relevant passages inside the paper:
+
+                ``"docetl"``
+                    Splits the paper into overlapping text chunks and runs a
+                    DocETL map-pipeline over them.  Each chunk is inspected by
+                    the LLM, which extracts sentences that specifically describe
+                    the target dataset.  Best when the dataset is extensively
+                    discussed across many sections.  Requires the ``docetl``
+                    package.
+
+                ``"reference"``
+                    Heuristic, no LLM in the selection step.  Scans the paper
+                    body for paragraphs that contain the dataset title keywords,
+                    then checks the reference list for matching entries.  Falls
+                    back to prominent section headers (``dataset``,
+                    ``methodology``, ``experiments``, …) if no direct title
+                    match is found.  Fastest and cheapest option; works best
+                    when the dataset is referred to by name throughout the paper.
+
+                ``"keyword"``
+                    Also heuristic, no LLM for selection.  Scores every
+                    overlapping text chunk by how many keywords from the title,
+                    topic, and existing description it contains, then sends the
+                    top-scoring chunks to the LLM for description generation.
+                    More flexible than ``"reference"`` because it draws keywords
+                    from the full description, not just the title.
+
+                ``"llm_selection"``
+                    Presents batches of paragraphs to the LLM together with the
+                    dataset title, topic, and description, asking it to return
+                    the paragraphs that specifically discuss this dataset.
+                    Useful when the title alone is not a reliable keyword (e.g.
+                    a short or generic name) but the dataset is clearly described
+                    in context.  More LLM calls than heuristic methods.
+
+                ``"paragraph_judge"``
+                    Two-stage filter over every paragraph in the paper.  First a
+                    fast keyword gate keeps only paragraphs that contain
+                    data-related vocabulary (``dataset``, ``corpus``,
+                    ``benchmark``, ``collected``, …).  Each surviving paragraph
+                    is then judged individually by the LLM given the full dataset
+                    context.  Most thorough but also most expensive in LLM calls;
+                    suitable when the dataset is described implicitly or across
+                    many scattered paragraphs.
+
+                ``"auto"`` *(default)*
+                    Tries all five strategies in the order above and returns the
+                    first non-empty result.  If one strategy raises an exception
+                    (e.g. ``docetl`` is not installed) it is silently skipped.
+
+        Returns:
+            Additional description derived from the paper, or an empty string
+            when no relevant information could be found.
+        """
+        return self.context_extractor.extract_content(
+            pdf_path=pdf_path,
+            dataset_title=dataset_title,
+            dataset_description=dataset_description,
+            dataset_topic=dataset_topic,
+            method=method,
+        )
 
     def expand_description_for_search(self, description: str, topic: str) -> tuple[str, str]:
         """

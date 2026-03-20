@@ -37,6 +37,7 @@ class DatasetDescriptionGenerator:
             "profile_instruction": prompts["profile_instruction"],
             "semantic_instruction": prompts["semantic_instruction"],
             "topic_instruction": prompts["topic_instruction"],
+            "context_instruction": prompts["context_instruction"],
             "closing_instruction": prompts["closing_instruction"],
         }
         self._system_message = prompts["system_message"].strip()
@@ -50,6 +51,8 @@ class DatasetDescriptionGenerator:
         use_semantic_profile: bool = False,
         data_topic: str | None = None,
         use_topic: bool = False,
+        data_context: str | None = None,
+        use_context: bool = False,
     ) -> str:
         sections: Iterable[str] = [
             self._prompt_segments["introduction"].format(dataset_sample=dataset_sample)
@@ -72,6 +75,11 @@ class DatasetDescriptionGenerator:
             prompt_parts.append(
                 self._prompt_segments["topic_instruction"].format(data_topic=data_topic)
             )
+        
+        if use_context and data_context:
+            prompt_parts.append(
+                self._prompt_segments["context_instruction"].format(data_context=data_context)
+            )
 
         prompt_parts.extend(
             [
@@ -90,6 +98,8 @@ class DatasetDescriptionGenerator:
         use_semantic_profile: bool = False,
         data_topic: str | None = None,
         use_topic: bool = False,
+        data_context: str | None = None,
+        use_context: bool = False,
     ) -> tuple[str, str]:
         """
         Call the model and return prompt and description
@@ -102,6 +112,8 @@ class DatasetDescriptionGenerator:
             use_semantic_profile: Include semantic profile if True
             data_topic: Short topic string
             use_topic: Include topic if True
+            data_context: Include additional information provided by context (ex.: paper, codebook, ...)
+            use_context: bool = Include the additional context if True
 
         Returns:
             (prompt, description)
@@ -115,6 +127,8 @@ class DatasetDescriptionGenerator:
             use_semantic_profile=use_semantic_profile,
             data_topic=data_topic,
             use_topic=use_topic,
+            data_context=data_context,
+            use_context=use_context,
         )
 
         response = self.llm_client.chat_completions_create(

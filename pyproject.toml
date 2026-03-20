@@ -41,6 +41,13 @@ dependencies = [
   "scikit-learn==1.6.1",
   "beartype>=0.18.5",
   "pyyaml==6.0.2",
+  "atlas-profiler>=0.0.1b0",
+  "docetl>=0.2.4",
+  "pymupdf>=1.24.0",
+  "sentence-transformers>=5.2.3",
+  "seaborn>=0.13.2",
+  "plotly>=6.6.0",
+  "pypdf2>=3.0.1",
 ]
 
 [project.optional-dependencies]

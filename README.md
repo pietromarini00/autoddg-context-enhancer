@@ -37,171 +37,79 @@ Then launch Jupyter Lab to explore:
 
 ```bash
 uv run --with jupyter jupyter lab
-```
-
-Alternatively, install directly via pip:
-
-```bash
-pip install git+https://github.com/VIDA-NYU/AutoDDG@main
-```
-
-**For local LLM support** (Qwen, Llama, etc.), install with optional dependencies:
-
-Using uv (recommended):
-```bash
-uv sync --extra local-llm
-```
-
-Using pip:
-```bash
-pip install git+https://github.com/VIDA-NYU/AutoDDG@main[local-llm]
-# or
-pip install git+https://github.com/VIDA-NYU/AutoDDG@main transformers torch
-```
-
-> [!CAUTION]
-> This installation method is temporary. A **PyPI release** of `AutoDDG` will soon be available. The `git+https` method will be deprecated in favor of the PyPI index.
-
----
+``` 
 
 ## Getting Started
-
-AutoDDG supports both **API-based** (OpenAI) and **local LLM** (transformers) modes.
 
 ### Using OpenAI API
 
 The simplest way to use AutoDDG is with an OpenAI API client:
 
 ```python
+import pandas as pd
+from autoddg import AutoDDG, GPTEvaluator
+from autoddg.utils import get_sample
 from openai import OpenAI
-from autoddg import AutoDDG
 
 # Setup OpenAI client
-client = OpenAI(api_key="sk-...")
+my_api_key="sk-..."
+client = OpenAI(api_key=my_api_key)
+model_name = "gpt-4o-mini"
 
 # Initialize AutoDDG
-autoddg = AutoDDG(client=client, model_name="gpt-4o-mini")
+auto_ddg = AutoDDG(client=client, model_name=model_name)
+
+title = "Ethiopia UEI Survey"
+csv_path = "ethiopia_UEI_survey.csv"
+pdf_path = "ethiopia_UEI_survey_paper.pdf"
+original_description = ''' '''
 
 # Generate description from a small CSV sample
-sample_csv = """Case_ID,Age,BMI
-C3L-00004,72,22.8
-C3L-00010,30,34.15
-"""
+df = pd.read_csv(csv_path, index_col=False, header=1, encoding='latin1')
+sample_df, dataset_sample = get_sample(df, sample_size=5)
 
-prompt, description = autoddg.describe_dataset(dataset_sample=sample_csv)
+basic_profile, structural_profile = auto_ddg.profile_dataframe(df)
 
-print(description)
-# >>> This dataset contains medical information about patients, including their unique Case_ID, Age, and Body Mass Index (BMI). etc.
-```
-
-### Using Local LLM
-
-AutoDDG also supports local LLMs via transformers (Qwen, Llama, etc.):
-
-```python
-from autoddg import AutoDDG
-
-# Initialize AutoDDG with local LLM
-autoddg = AutoDDG(
-    client=None,
-    model_name="Qwen/Qwen2.5-7B-Instruct",  # or any HuggingFace model
-    use_local_llm=True,
-    local_llm_device="cuda",  # or "cpu" if no GPU
-    local_llm_dtype="bfloat16",  # or "float16", "float32"
+data_topic = auto_ddg.generate_topic(
+    title=title,
+    original_description=original_description,
+    dataset_sample=dataset_sample,
 )
 
-# Generate description
-sample_csv = """Case_ID,Age,BMI
-C3L-00004,72,22.8
-C3L-00010,30,34.15
-"""
+semantic_profile_details = auto_ddg.analyze_semantics(sample_df)
 
-prompt, description = autoddg.describe_dataset(dataset_sample=sample_csv)
-print(description)
-```
-
-**Note:** For local LLM support, ensure you have installed the optional dependencies:
-```bash
-pip install transformers torch
-```
-
-### Semantic Profiler Processing Modes
-
-AutoDDG provides multiple processing modes for semantic profiling to optimize performance based on your use case:
-
-| Mode | OpenAI API | Local LLM | Description |
-|------|------------|-----------|-------------|
-| **Sequential** | ✅ | ✅ | Default mode, processes columns one by one |
-| **Multi-threading** | ✅ | ❌ | Concurrent processing for faster execution |
-| **Group-prompting** | ✅ | ✅ | Processes multiple columns in one prompt |
-| **Batch processing** | ❌ | ✅ | Efficient GPU utilization for local models |
-
-#### Sequential Mode (Default)
-
-The default mode processes columns sequentially. Works with both API and local LLMs:
-
-```python
-# Sequential mode (default)
-semantic_profile = autoddg.analyze_semantics(dataframe)
-```
-
-#### Multi-threading Mode (OpenAI API Only)
-
-Use multi-threading to process columns concurrently for faster execution. **Only available for OpenAI API clients:**
-
-```python
-# Multi-threading mode (OpenAI API only)
-semantic_profile = autoddg.analyze_semantics(
-    dataframe,
-    use_multi_threading=True,
-    max_workers=32,  # Optional: number of concurrent workers
-)
-```
-
-#### Group-prompting Mode (Both API and Local LLM)
-
-Process multiple columns in a single prompt to reduce API calls. Efficient for both API and local LLMs:
-
-```python
-# Group-prompting: process all columns at once
-semantic_profile = autoddg.analyze_semantics(
-    dataframe,
-    use_group_prompting=True,
-    group_size=0,  # 0 = all columns at once, >0 = group size
+semantic_profile = "\n".join(
+    section for section in [structural_profile, semantic_profile_details] if section
 )
 
-# Or process in groups of 5 columns
-semantic_profile = autoddg.analyze_semantics(
-    dataframe,
-    use_group_prompting=True,
-    group_size=5,
+paper_context = auto_ddg.extract_content(
+    pdf_path=pdf_path,
+    dataset_title=title,
+    dataset_topic=data_topic,
+    method={"reference", "keyword", "llm_selection" or "paragraph_judge"}
 )
-```
 
-#### Batch Processing Mode (Local LLM Only)
-
-For local LLMs, use batch processing for efficient GPU utilization. **Only available for local LLMs:**
-
-```python
-# Batch processing mode (Local LLM only)
-semantic_profile = autoddg.analyze_semantics(
-    dataframe,
-    use_batch_processing=True,
-    batch_size=32,  # Number of columns to process per batch
+_, original_autoddg_description = auto_ddg.describe_dataset(
+    dataset_sample=dataset_sample,
+    dataset_profile=basic_profile,
+    use_profile=True,
+    semantic_profile=semantic_profile,
+    use_semantic_profile=True,
+    data_topic=data_topic,
+    use_topic=True,
 )
-```
 
-**Important Notes:**
-- Multi-threading is only available for OpenAI API clients
-- Batch processing is only available for local LLMs
-- Group-prompting works with both API and local LLMs
-- Batch processing takes precedence over other modes if enabled
-
-### Quick Jupyter Notebook Start
-
-For a much better introduction, we **highly recommend** starting with the [quick_start notebook with an example dataset](./examples/quick_start.ipynb).
-
----
+_, autoddg_enhanced_context_description = auto_ddg.describe_dataset(
+    dataset_sample=dataset_sample,
+    dataset_profile=basic_profile,
+    use_profile=True,
+    semantic_profile=semantic_profile,
+    use_semantic_profile=True,
+    data_topic=data_topic,
+    use_topic=True,
+    data_context=paper_context,
+    use_context=True,
+)
 
 ## How to Cite
 
