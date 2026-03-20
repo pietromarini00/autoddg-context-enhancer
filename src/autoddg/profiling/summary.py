@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import datamart_profiler
+import atlas_profiler
 from beartype import beartype
 from pandas import DataFrame
 
@@ -10,9 +10,9 @@ from pandas import DataFrame
 @beartype
 def profile_dataset(data_frame: DataFrame) -> tuple[str, str]:
     """
-    Run datamart profiling and produce short textual summaries
+    Run atlas profiling and produce short textual summaries
 
-    Ref: https://pypi.org/project/datamart-profiler/
+    Ref: https://github.com/VIDA-NYU/atlas-profiler#
 
     Args:
         data_frame: Input frame
@@ -21,7 +21,7 @@ def profile_dataset(data_frame: DataFrame) -> tuple[str, str]:
         (profile_text, semantic_notes)
     """
 
-    metadata = datamart_profiler.process_dataset(data_frame)
+    metadata = atlas_profiler.process_dataset(data_frame)
     profile_summary: list[str] = []
 
     for column_meta in metadata.get("columns", []):
