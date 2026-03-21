@@ -314,9 +314,7 @@ class ContextFocusedDescription:
         self,
         pdf_path: str,
         dataset_title: str | None = None,
-        dataset_description: str | None = None,
-        dataset_topic: str | None = None,
-    ) -> str:
+        ) -> str:
         """Locate dataset mentions heuristically and synthesise a description.
 
         Steps:
@@ -361,7 +359,7 @@ class ContextFocusedDescription:
         if not passages:
             return ""
 
-        combined = "\n\n---\n\n".join(passages[:12])
+        combined = "\n\n".join(passages)
         #if len(combined) > 9000:
         #    combined = combined[:9000]
 
@@ -406,23 +404,18 @@ class ContextFocusedDescription:
 
         # Build keyword list from title, topic, and description terms
         keywords: list[str] = dataset_title.split()
-        if dataset_topic:
-            keywords += dataset_topic.split()
-        # Add longer words from the description as extra signal
-        if dataset_description:
-            keywords += [w for w in dataset_description.split() if len(w) > 5]
-
+        
         top_chunks = _score_chunks_by_keywords(text, keywords)
 
         if not top_chunks:
             # Fall back to intro + conclusion when keywords never appear
-            words = text.split()
-            top_chunks = [
-                " ".join(words[:600]),
-                " ".join(words[-600:]),
-            ]
+            return ""
+            #top_chunks = [
+            #    " ".join(words[:600]),
+            #    " ".join(words[-600:]),
+            #]
 
-        context_text = "\n\n---\n\n".join(top_chunks)
+        context_text = "\n\n".join(top_chunks)
         #if len(context_text) > 12000:
         #    context_text = context_text[:12000]
 
@@ -440,8 +433,6 @@ class ContextFocusedDescription:
         self,
         pdf_path: str,
         dataset_title: str | None = None,
-        dataset_description: str | None = None,
-        dataset_topic: str | None = None,
         batch_size: int = 15,
     ) -> str:
         """Have the LLM decide which paragraphs are about this specific dataset.
@@ -464,15 +455,12 @@ class ContextFocusedDescription:
         text = _extract_text_from_pdf(pdf_path)
         paragraphs = _split_paragraphs(text)
 
-        topic_line = f"\nDataset topic: {dataset_topic}" if dataset_topic else ""
         selected: list[str] = []
 
         for batch_start in range(0, len(paragraphs), batch_size):
             batch = paragraphs[batch_start : batch_start + batch_size]
             prompt = self._llm_selection_prompt.format(
                 dataset_title=dataset_title,
-                dataset_topic=topic_line,
-                dataset_description=dataset_description,
                 paragraphs="\n\n".join(batch),
             )
             response = self.llm_client.chat_completions_create(
@@ -489,7 +477,7 @@ class ContextFocusedDescription:
         if not selected:
             return ""
 
-        combined = "\n\n---\n\n".join(selected)
+        combined = "\n\n".join(selected)
         #if len(combined) > 12000:
         #    combined = combined[:12000]
 
@@ -506,9 +494,7 @@ class ContextFocusedDescription:
         self,
         pdf_path: str,
         dataset_title: str | None = None,
-        dataset_description: str | None = None,
-        dataset_topic: str | None = None,
-    ) -> str:
+        ) -> str:
         """Filter paragraphs with a keyword gate then verify each with an LLM judge.
 
         Two-stage pipeline:
@@ -547,14 +533,11 @@ class ContextFocusedDescription:
             if any(kw in p.lower() for kw in _DATA_KEYWORDS)
         ]
 
-        topic_line = f"\nDataset topic: {dataset_topic}" if dataset_topic else ""
         approved: list[str] = []
 
         for para in candidates:
             prompt = self._paragraph_judge_prompt.format(
                 dataset_title=dataset_title,
-                dataset_topic=topic_line,
-                dataset_description=dataset_description,
                 paragraph=para,
             )
             response = self.llm_client.chat_completions_create(
@@ -571,7 +554,7 @@ class ContextFocusedDescription:
         if not approved:
             return ""
 
-        combined = "\n\n---\n\n".join(approved)
+        combined = "\n\n".join(approved)
         #if len(combined) > 12000:
         #    combined = combined[:12000]
 
@@ -588,8 +571,6 @@ class ContextFocusedDescription:
         self,
         pdf_path: str,
         dataset_title: str | None = None,
-        dataset_description: str | None = None,
-        dataset_topic: str | None = None,
         method: Literal[
             "docetl", "reference", "keyword", "llm_selection", "paragraph_judge", "auto"
         ] = "auto",
@@ -630,9 +611,7 @@ class ContextFocusedDescription:
 
         kwargs: dict[str, Any] = dict(
             pdf_path=pdf_path,
-            dataset_title=dataset_title,
-            dataset_description=dataset_description,
-            dataset_topic=dataset_topic,
+            dataset_title=dataset_title
         )
 
         if method == "docetl":

@@ -343,8 +343,6 @@ class AutoDDG:
         self,
         pdf_path: str,
         dataset_title: str | None = None,
-        dataset_description: str | None = None,
-        dataset_topic: str | None = None,
         method: str = "auto",
     ) -> str:
         """Extract paper-derived context for a dataset and return an enriched description.
@@ -424,8 +422,6 @@ class AutoDDG:
         return self.context_extractor.extract_content(
             pdf_path=pdf_path,
             dataset_title=dataset_title,
-            dataset_description=dataset_description,
-            dataset_topic=dataset_topic,
             method=method,
         )
 
