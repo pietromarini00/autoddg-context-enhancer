@@ -44,10 +44,15 @@ dependencies = [
   "atlas-profiler>=0.0.1b0",
   "docetl>=0.2.4",
   "pymupdf>=1.24.0",
-  "sentence-transformers>=5.2.3",
+  "sentence-transformers<5.2.3",
   "seaborn>=0.13.2",
   "plotly>=6.6.0",
   "pypdf2>=3.0.1",
+  "openpyxl>=3.1.5",
+  "torchvision>=0.25.0",
+  "transformers==4.44.2",
+  "lotus-ai",
+  "tempfile",
 ]
 
 [project.optional-dependencies]
