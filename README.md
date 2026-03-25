@@ -1,16 +1,4 @@
-# 🏷️ AutoDDG: Automated Dataset Description Generation using Large Language Models
-
-<div align="center">
-  <p>
-    <a href="https://arxiv.org/abs/2502.01050"><img src="https://img.shields.io/badge/arXiv-2502.01050-b31b1b?style=flat-square&logo=arxiv&logoColor=white" alt="arXiv"></a>
-    <img src="https://img.shields.io/static/v1?label=UV&message=compliant&color=2196F3&style=flat-square" alt="UV">
-    <img src="https://img.shields.io/static/v1?label=RUFF&message=lint%2Fformat&color=9C27B0&style=flat-square&logo=ruff&logoColor=white" alt="Ruff">
-    <img src="https://img.shields.io/badge/Black-formatted-000000?style=flat-square&logo=python&logoColor=white" alt="Black formatted">
-    <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python >= 3.10">
-    <img src="https://img.shields.io/badge/OpenAI-Model-blue?style=flat-square&logo=openai" alt="OpenAI">
-    <img src="https://img.shields.io/badge/Local-LLM-green?style=flat-square&logo=huggingface" alt="Local LLM">
-  </p>
-</div>
+# Contex-Aware Dataset Description
 
 ## Overview
 
