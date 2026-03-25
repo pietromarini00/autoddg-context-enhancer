@@ -12,7 +12,6 @@ from beartype import beartype
 from ..llm import LLMClient
 from ..utils import load_prompts
 
-
 # ---------------------------------------------------------------------------
 # PDF helpers (module-level so they can be tested/used independently)
 # ---------------------------------------------------------------------------
@@ -108,11 +107,7 @@ class ContextFocusedDescription:
     Five extraction strategies are available.  All can be invoked independently
     via the *method* argument of :meth:`extract_content`:
 
-    ``"docetl"``
-        Builds a DocETL map-pipeline over overlapping text chunks from the
-        paper.  Each chunk is examined by an LLM for information about the
-        target dataset.  Requires the ``docetl`` package.
-
+    
     ``"reference"``
         Heuristic approach: scans the paper body for paragraphs that mention
         the dataset title and checks the reference list for dataset citations.
@@ -139,8 +134,14 @@ class ContextFocusedDescription:
         this specific dataset.  All approved paragraphs are concatenated and
         passed to the final description generation step.
 
+    ``"lotus"``
+        Loads the paper paragraphs into a :mod:`pandas` DataFrame and
+        applies a LOTUS ``sem_filter`` to keep only the paragraphs that
+        specifically discuss the target dataset.  Requires the
+        ``lotus-ai`` package.
+
     ``"auto"`` (default)
-        Cascades through all five methods in order, returning the first
+        Cascades through all six methods in order, returning the first
         non-empty result.
 
     Args:
@@ -160,7 +161,7 @@ class ContextFocusedDescription:
         prompts = load_prompts()["context_profiler"]
         self._system_message = prompts["system_message"].strip()
         self._description_prompt = prompts["description_prompt"]
-        self._docetl_chunk_prompt = prompts["docetl_chunk_prompt"]
+        #self._docetl_chunk_prompt = prompts["docetl_chunk_prompt"]
         self._llm_selection_prompt = prompts["llm_selection_prompt"]
         self._paragraph_judge_prompt = prompts["paragraph_judge_prompt"]
 
@@ -202,110 +203,7 @@ class ContextFocusedDescription:
         )
         return response["choices"][0]["message"]["content"].strip()
 
-    # ------------------------------------------------------------------
-    # Method 1 – DocETL pipeline
-    # ------------------------------------------------------------------
-
-    def _extract_via_docetl(
-        self,
-        pdf_path: str,
-        dataset_title: str | None = None,
-        dataset_description: str | None = None,
-        dataset_topic: str | None = None,
-    ) -> str:
-        """Use a DocETL map-pipeline to find dataset information across the paper.
-
-        The paper text is split into overlapping word-chunks.  A DocETL
-        ``MapOp`` processes each chunk with an LLM prompt asking it to extract
-        any information specifically about *dataset_title*.  Non-empty
-        extractions are joined and passed to :meth:`_generate_description_from_context`.
-
-        Requires the ``docetl`` package (``pip install docetl``).
-
-        Args:
-            pdf_path: Path to the paper PDF.
-            dataset_title: Name of the dataset to search for.
-            dataset_description: Existing description of the dataset.
-            dataset_topic: Optional short topic string.
-
-        Returns:
-            Enriched description string, or empty string if nothing found.
-
-        Raises:
-            ImportError: If ``docetl`` is not installed.
-        """
-        from docetl.api import (  # type: ignore[import]
-            Dataset,
-            MapOp,
-            Pipeline,
-            PipelineOutput,
-            PipelineStep,
-        )
-
-        pdf_text = _extract_text_from_pdf(pdf_path)
-
-        chunk_words = 400
-        step = chunk_words // 2
-        words = pdf_text.split()
-        chunks = [
-            {"id": idx, "text": " ".join(words[i : i + chunk_words])}
-            for idx, i in enumerate(range(0, len(words), step))
-        ]
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            input_path = os.path.join(tmpdir, "chunks.json")
-            output_path = os.path.join(tmpdir, "output.json")
-
-            with open(input_path, "w", encoding="utf-8") as fh:
-                json.dump(chunks, fh)
-
-            topic_line = f"\nDataset topic: {dataset_topic}" if dataset_topic else ""
-            chunk_prompt = self._docetl_chunk_prompt.format(
-                dataset_title=dataset_title,
-                dataset_topic=topic_line,
-                dataset_description=dataset_description,
-            )
-
-            pipeline = Pipeline(
-                name="context_extraction",
-                datasets={"chunks": Dataset(type="file", path=input_path)},
-                operations=[
-                    MapOp(
-                        name="extract_dataset_info",
-                        type="map",
-                        prompt=chunk_prompt + "\n\nText chunk: {{input.text}}",
-                        output={"schema": {"dataset_info": "string"}},
-                    )
-                ],
-                steps=[
-                    PipelineStep(
-                        name="extract_step",
-                        input="chunks",
-                        operations=["extract_dataset_info"],
-                    )
-                ],
-                output=PipelineOutput(type="file", path=output_path),
-                default_model=self.model,
-            )
-
-            pipeline.run()
-
-            with open(output_path, encoding="utf-8") as fh:
-                results = json.load(fh)
-
-            extracted = [
-                r.get("dataset_info", "").strip()
-                for r in results
-                if r.get("dataset_info", "").strip()
-            ]
-            if not extracted:
-                return ""
-
-            combined = "\n\n".join(extracted)
-            return self._generate_description_from_context(
-                dataset_title, dataset_description, combined, dataset_topic
-            )
-
+    
     # ------------------------------------------------------------------
     # Method 2 – Heuristic reference / paragraph scanning
     # ------------------------------------------------------------------
@@ -564,6 +462,101 @@ class ContextFocusedDescription:
         return combined
 
     # ------------------------------------------------------------------
+    # Method 6 – LOTUS semantic filter
+    # ------------------------------------------------------------------
+
+    def _extract_via_lotus(
+        self,
+        pdf_path: str,
+        dataset_title: str | None = None,
+        embedding_model: str = "intfloat/e5-base-v2",
+        top_k: int = 30,
+    ) -> str:
+        """Extract paragraphs using the LOTUS sem_index → sem_search → sem_filter pipeline.
+
+        Step 1 (sem_index + sem_search): cheap embedding-based retrieval narrows
+        all paragraphs down to the top_k most semantically similar — no LLM calls.
+        Step 2 (sem_filter): the LLM verifies each candidate using self.llm_client,
+        the same client used by the rest of autoddg.
+
+        Args:
+            pdf_path: Path to the paper PDF.
+            dataset_title: Name of the dataset to search for.
+            embedding_model: SentenceTransformers model for vector retrieval.
+            top_k: Number of candidates retrieved before LLM filtering.
+
+        Returns:
+            Relevant paragraphs joined by double newlines, or empty string.
+        """
+        import tempfile
+        import pandas as pd
+        import lotus
+        from lotus.models import LM, SentenceTransformersRM
+        from lotus.vector_store import FaissVS
+
+        # ── Wrap self.llm_client so lotus uses the same client as autoddg ─────────
+        class _AutoDDGLM(LM):
+            def __init__(inner_self):
+                super().__init__(model=self.model)
+
+            def __call__(inner_self, messages_list, **kwargs):
+                from lotus.models.lm import LMOutput
+                outputs = []
+                for messages in messages_list:
+                    response = self.llm_client.chat_completions_create(
+                        model=self.model,
+                        messages=messages,
+                    )
+                    content = response["choices"][0]["message"]["content"].strip()
+                    outputs.append(content)
+                return LMOutput(outputs=outputs, logprobs=None)
+
+        # ── Extract and split text ────────────────────────────────────────────────
+        text = _extract_text_from_pdf(pdf_path)
+        paragraphs = _split_paragraphs(text)
+
+        if not paragraphs:
+            return ""
+
+        df = pd.DataFrame({"paragraph": paragraphs})
+
+        # Reinitialise everything inside the tempdir block so each paper call
+        # gets a completely fresh FaissVS with no leftover index from prior calls.
+        # All early returns are inside the block so filtered is always in scope.
+        with tempfile.TemporaryDirectory() as index_dir:
+            lm = _AutoDDGLM()
+            rm = SentenceTransformersRM(model=embedding_model)
+            vs = FaissVS()
+            lotus.settings.configure(lm=lm, rm=rm, vs=vs)
+
+            # Step 1a: build FAISS embedding index — no LLM calls
+            df = df.sem_index("paragraph", index_dir)
+
+            # Step 1b: retrieve top-K by embedding similarity — still no LLM calls.
+            # Query uses the dataset name directly to maximise recall of paragraphs
+            # that explicitly mention it, rather than topically related paragraphs.
+            candidates = df.sem_search(
+                "paragraph",
+                f"'{dataset_title}' dataset",
+                K=min(top_k, len(paragraphs)),
+            )
+
+            if candidates.empty:
+                return ""
+
+            # Step 2: LLM filter on candidates only — uses self.llm_client
+            filtered = candidates.sem_filter(
+                f"{{paragraph}} specifically mentions or discusses "
+                f"the dataset named '{dataset_title}'."
+            )
+
+            if filtered.empty:
+                return ""
+
+            result = "\n\n".join(filtered["paragraph"].tolist())
+
+        return result
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -572,7 +565,7 @@ class ContextFocusedDescription:
         pdf_path: str,
         dataset_title: str | None = None,
         method: Literal[
-            "docetl", "reference", "keyword", "llm_selection", "paragraph_judge", "auto"
+            "reference", "keyword", "llm_selection", "paragraph_judge", "lotus", "auto"
         ] = "auto",
     ) -> str:
         """Extract paper-derived context for a dataset and return an enriched description.
@@ -596,6 +589,8 @@ class ContextFocusedDescription:
                   given full dataset context.
                 * ``"paragraph_judge"`` – Keyword gate then per-paragraph LLM
                   judge.
+                * ``"lotus"`` – LOTUS ``sem_filter`` over paper paragraphs.
+                  Requires ``lotus-ai`` package.
                 * ``"auto"`` – Tries all methods in the order above, returns
                   first non-empty result (default).
 
@@ -614,8 +609,8 @@ class ContextFocusedDescription:
             dataset_title=dataset_title
         )
 
-        if method == "docetl":
-            return self._extract_via_docetl(**kwargs)
+        #if method == "docetl":
+        #    return self._extract_via_docetl(**kwargs)
         if method == "reference":
             return self._extract_via_reference(**kwargs)
         if method == "keyword":
@@ -624,14 +619,17 @@ class ContextFocusedDescription:
             return self._extract_via_llm_selection(**kwargs)
         if method == "paragraph_judge":
             return self._extract_via_paragraph_judge(**kwargs)
+        if method == "lotus":
+            return self._extract_via_lotus(**kwargs)
 
         # "auto": cascade through all strategies, return first non-empty result
         for approach in (
-            self._extract_via_docetl,
+            #self._extract_via_docetl,
             self._extract_via_reference,
             self._extract_via_keyword,
             self._extract_via_llm_selection,
             self._extract_via_paragraph_judge,
+            self._extract_via_lotus,
         ):
             try:
                 result = approach(**kwargs)
