@@ -51,8 +51,6 @@ dependencies = [
   "openpyxl>=3.1.5",
   "torchvision>=0.25.0",
   "transformers==4.44.2",
-  "lotus-ai",
-  "tempfile",
 ]
 
 [project.optional-dependencies]
