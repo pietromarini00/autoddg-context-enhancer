@@ -415,6 +415,13 @@ class AutoDDG:
                     first non-empty result.  If one strategy raises an exception
                     (e.g. ``docetl`` is not installed) it is silently skipped.
 
+                ``"data_gatherer"``
+                    Method imported from data_gatherer.parser.retrieve_relevant_content.
+                    Takes as input these parameters: 
+                    full_paper, dataset_ID_patterns, semantic_retrieval, query
+                    force_include_DAS
+                    Returns either text or json 
+
         Returns:
             Additional description derived from the paper, or an empty string
             when no relevant information could be found.
