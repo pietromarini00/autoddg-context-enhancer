@@ -556,6 +556,62 @@ class ContextFocusedDescription:
             result = "\n\n".join(filtered["paragraph"].tolist())
 
         return result
+    
+    def _extract_via_data_gatherer(
+        self,
+        pdf_path: str,
+        dataset_title: str | None = None,
+        force_include_DAS: bool = False,
+    ) -> str:
+        """Use the data_gatherer tool to extract dataset-specific context from the paper."""
+        from data_gatherer.data_gatherer import DataGatherer
+        from data_gatherer.parser.grobid_pdf_parser import GrobidPDFParser
+
+        dg = DataGatherer(grobid_for_pdf=True)
+
+        grobid_home = str(Path(__file__).resolve().parents[3] / "tools" / "grobid-0.8.2")
+        dg.parser = GrobidPDFParser(
+            dg.open_data_repos_ontology,
+            dg.logger,
+            grobid_home=grobid_home,
+        )
+
+        # Build normalized full-text from GROBID TEI XML before context retrieval.
+        try:
+            xml_root = dg.parser.pdf_to_xml(file_path, current_url_address, article_file_dir)
+            
+            if xml_root is None:
+                raise RuntimeError("PDF to XML conversion failed")
+            
+            router = XMLRouter(
+                dg.open_data_repos_ontology, 
+                dg.logger, 
+                llm_name=dg.llm_name, 
+                full_document_read=dg.full_document_read,
+                use_portkey=False,
+                save_dynamic_prompts=self.save_dynamic_prompts,
+                save_responses_to_cache=self.save_responses_to_cache,
+                use_cached_responses=self.use_cached_responses
+            )
+            dg.parser = router.get_parser(xml_root)
+
+            return dg.parser.retrieve_relevant_content(
+                xml_root,
+                semantic_retrieval=True, 
+                top_k=5,
+                article_id=None, 
+                max_tokens=None, 
+                skip_rule_based_retrieved_elm=False,
+                include_snippets_with_ID_patterns=False, 
+                output_format='text',
+                query=dataset_title, 
+                ID_patterns=dataset_title, 
+                force_include_DAS=False
+            )
+
+        except Exception as e:
+            self.logger.error(f"GROBID failed on {file_path}: {e}")
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -565,7 +621,7 @@ class ContextFocusedDescription:
         pdf_path: str,
         dataset_title: str | None = None,
         method: Literal[
-            "reference", "keyword", "llm_selection", "paragraph_judge", "lotus", "auto"
+            "reference", "keyword", "llm_selection", "paragraph_judge", "lotus", "data_gatherer", "auto"
         ] = "auto",
     ) -> str:
         """Extract paper-derived context for a dataset and return an enriched description.
@@ -593,6 +649,8 @@ class ContextFocusedDescription:
                   Requires ``lotus-ai`` package.
                 * ``"auto"`` – Tries all methods in the order above, returns
                   first non-empty result (default).
+                * ``data_gatherer`` - Use the data_gatherer tool to extract 
+                    dataset-specific context from the paper.
 
         Returns:
             Additional description derived from the paper, or an empty string
@@ -621,6 +679,8 @@ class ContextFocusedDescription:
             return self._extract_via_paragraph_judge(**kwargs)
         if method == "lotus":
             return self._extract_via_lotus(**kwargs)
+        if method == "data_gatherer":
+            return self._extract_via_data_gatherer(**kwargs)
 
         # "auto": cascade through all strategies, return first non-empty result
         for approach in (
