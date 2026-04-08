@@ -2,6 +2,10 @@
 venv/
 .venv/
 
+# Ignore env variables
+.env
+**/.env
+
 # Ignore macOS system files
 .DS_Store
 
@@ -74,3 +78,4 @@ nosetests.xml
 # Model
 *.pt
 **/*.pt
+logs/*

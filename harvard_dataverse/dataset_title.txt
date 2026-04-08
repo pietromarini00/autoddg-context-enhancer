@@ -1,0 +1,15 @@
+### pdf file title : dataset title 
+{
+'bunker': 'Chilean Political Landscape Dataset (CPLD)',
+'yuksel': 'Continental Shelf Delimitation Preferences Dataset',
+'bennion': '''Data for "Surfacing Semantic Orthogonality Across Model Safety Benchmarks: A Multi-Dimensional Analysis"''',
+'heyne': 'Replication Data for: Why democracy does not work for everyone: Social status and support for democracy in Europe',
+'mant': 'Northampton Infirmary Eighteenth Century Child Admission Database (NIECCAD)',
+'hendriks': 'Supplemental Material for Mini-Review: System-level considerations associated with cow-calf contact in seasonal-calving pasture-based dairy systems',
+'cotropia': 'Citations and Rejection Uses for U.S. Utility Patents Issued from 1999 to 2007',
+}
+ 
+ 
+
+
+

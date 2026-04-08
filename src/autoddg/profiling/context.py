@@ -566,19 +566,32 @@ class ContextFocusedDescription:
         """Use the data_gatherer tool to extract dataset-specific context from the paper."""
         from data_gatherer.data_gatherer import DataGatherer
         from data_gatherer.parser.grobid_pdf_parser import GrobidPDFParser
+        from data_gatherer.parser.xml_parser import XMLRouter
 
-        dg = DataGatherer(grobid_for_pdf=True)
+        # data_gatherer expects llm_name to be a non-null string.
+        llm_name = self.model or "gpt-4o-mini"
+        dg = DataGatherer(grobid_for_pdf=True, llm_name=llm_name, log_level="DEBUG")
 
         grobid_home = str(Path(__file__).resolve().parents[3] / "tools" / "grobid-0.8.2")
         dg.parser = GrobidPDFParser(
             dg.open_data_repos_ontology,
             dg.logger,
+            llm_name=dg.llm,
+            full_document_read=dg.full_document_read,
+            use_portkey=False,
+            save_dynamic_prompts=dg.save_dynamic_prompts,
+            save_responses_to_cache=dg.save_to_cache,
+            use_cached_responses=dg.load_from_cache,
             grobid_home=grobid_home,
         )
 
         # Build normalized full-text from GROBID TEI XML before context retrieval.
         try:
-            xml_root = dg.parser.pdf_to_xml(file_path, current_url_address, article_file_dir)
+            xml_root = dg.parser.pdf_to_xml(
+                pdf_path,
+                current_url_address=None,
+                article_file_dir=dg.article_file_dir,
+            )
             
             if xml_root is None:
                 raise RuntimeError("PDF to XML conversion failed")
@@ -586,16 +599,18 @@ class ContextFocusedDescription:
             router = XMLRouter(
                 dg.open_data_repos_ontology, 
                 dg.logger, 
-                llm_name=dg.llm_name, 
+                llm_name=dg.llm,
                 full_document_read=dg.full_document_read,
                 use_portkey=False,
-                save_dynamic_prompts=self.save_dynamic_prompts,
-                save_responses_to_cache=self.save_responses_to_cache,
-                use_cached_responses=self.use_cached_responses
+                save_dynamic_prompts=dg.save_dynamic_prompts,
+                save_responses_to_cache=dg.save_to_cache,
+                use_cached_responses=dg.load_from_cache,
             )
-            dg.parser = router.get_parser(xml_root)
+            xml_parser = router.get_parser(xml_root)
 
-            return dg.parser.retrieve_relevant_content(
+            query = dataset_title or ""
+
+            content = xml_parser.retrieve_relevant_content(
                 xml_root,
                 semantic_retrieval=True, 
                 top_k=5,
@@ -604,13 +619,14 @@ class ContextFocusedDescription:
                 skip_rule_based_retrieved_elm=False,
                 include_snippets_with_ID_patterns=False, 
                 output_format='text',
-                query=dataset_title, 
-                ID_patterns=dataset_title, 
-                force_include_DAS=False
+                query=query,
+                ID_patterns=query,
+                force_include_DAS=force_include_DAS,
             )
+            return content or ""
 
         except Exception as e:
-            self.logger.error(f"GROBID failed on {file_path}: {e}")
+            raise RuntimeError(f"data_gatherer extraction failed for {pdf_path}: {e}") from e
 
     # ------------------------------------------------------------------
     # Public API
